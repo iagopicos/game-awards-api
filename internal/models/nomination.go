@@ -1,3 +1,3 @@
 package models
 
-type nomination struct{}
+type Nomination struct{}
