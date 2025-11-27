@@ -1,3 +1,5 @@
 package models
 
-type Category struct{}
+type Category struct {
+	CategoryID uint
+}
