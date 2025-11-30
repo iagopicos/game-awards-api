@@ -7,7 +7,7 @@ import (
 )
 
 type Game struct {
-	GameID      uuid.UUID    `gorm:"type:uuid;primaryKey;default:uuid_generate_4()" json:"game_id"`
+	GameID      uuid.UUID    `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"game_id"`
 	Title       string       `gorm:"type:varchar(255);not null" json:"title"`
 	ReleaseDate *time.Time   `gorm:"type:date" json:"release_date"`
 	ImageURL    string       `gorm:"type:varchar(500)" json:"image_url"`
