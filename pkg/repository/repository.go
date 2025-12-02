@@ -5,6 +5,20 @@ import (
 )
 
 // Repository defines the generic CRUD operations
+type Repository[T any] interface {
+	// Regular operations (no transaction)
+	Create(entity *T) error
+	FindByID(id any) (*T, error)
+	FindAll() ([]T, error)
+	Update(entity *T) error
+	Delete(id any) error
+
+	// Transaction variants (for writes only)
+	CreateTx(tx *gorm.DB, entity *T) error
+	UpdateTx(tx *gorm.DB, entity *T) error
+	DeleteTx(tx *gorm.DB, id any) error
+}
+
 // genericRepository implements Repository interface
 type genericRepository[T any] struct {
 	db *gorm.DB
@@ -47,8 +61,6 @@ func (r *genericRepository[T]) Delete(id any) error {
 	var entity T
 	return r.db.Delete(&entity, id).Error
 }
-
-// Transaction variants
 
 // CreateTx creates an entity within a transaction
 func (r *genericRepository[T]) CreateTx(tx *gorm.DB, entity *T) error {
