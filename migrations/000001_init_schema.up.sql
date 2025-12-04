@@ -18,6 +18,7 @@ CREATE TABLE games (
     title VARCHAR(255) NOT NULL,
     release_date DATE,
     image_url VARCHAR(500),
+    developer VARCHAR(250),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
