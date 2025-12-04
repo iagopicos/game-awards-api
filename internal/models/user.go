@@ -13,7 +13,7 @@ type User struct {
 	Password    string       `gorm:"type:varchar(255);not null" json:"password"`
 	Predictions []Prediction `gorm:"foreignKey:UserID" json:"predictions,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
-	UdatedAt    time.Time    `json:"updated_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 func (User) TableName() string {
