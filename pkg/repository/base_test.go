@@ -1,13 +1,14 @@
-package repository_test
+package repository
 
 import (
+	"context"
 	"database/sql"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/iagopicos/game-awards-api/pkg/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -16,9 +17,9 @@ import (
 )
 
 type TestModel struct {
-	ID        uint   `gorm:"primaryKey"`
-	Name      string `gorm:"type:varchar(100)"`
-	Email     string `gorm:"type:varchar(100)"`
+	ID        uint      `gorm:"primaryKey"`
+	Name      string    `gorm:"type:varchar(100)"`
+	Email     string    `gorm:"type:varchar(100)"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -48,7 +49,8 @@ func TestCreate(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	testModel := &TestModel{
 		Name:  "John Doe",
@@ -61,17 +63,64 @@ func TestCreate(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectCommit()
 
-	err := repo.Create(testModel)
+	err := repo.Create(ctx, testModel)
 
 	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateWithCanceledContext(t *testing.T) {
+	db, mock, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	// Context cancelado
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancelar inmediatamente
+
+	testModel := &TestModel{
+		Name:  "John Doe",
+		Email: "john@example.com",
+	}
+
+	// No esperamos ninguna query porque el context está cancelado
+	err := repo.Create(ctx, testModel)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateWithTimeout(t *testing.T) {
+	db, _, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	// Context con timeout muy corto
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+
+	time.Sleep(10 * time.Millisecond) // Asegurar que expire
+
+	testModel := &TestModel{
+		Name:  "John Doe",
+		Email: "john@example.com",
+	}
+
+	err := repo.Create(ctx, testModel)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context deadline exceeded")
 }
 
 func TestFindByID(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	expectedModel := TestModel{
 		ID:    1,
@@ -86,7 +135,7 @@ func TestFindByID(t *testing.T) {
 		WithArgs(1, 1).
 		WillReturnRows(rows)
 
-	result, err := repo.FindByID(uint(1))
+	result, err := repo.FindByID(ctx, uint(1))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -96,17 +145,35 @@ func TestFindByID(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestFindByIDWithCanceledContext(t *testing.T) {
+	db, mock, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := repo.FindByID(ctx, uint(1))
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "context canceled")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFindByIDNotFound(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "test_models" WHERE "test_models"."id" = $1 ORDER BY "test_models"."id" LIMIT $2`)).
 		WithArgs(999, 1).
 		WillReturnError(gorm.ErrRecordNotFound)
 
-	result, err := repo.FindByID(uint(999))
+	result, err := repo.FindByID(ctx, uint(999))
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
@@ -118,7 +185,8 @@ func TestFindAll(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	rows := sqlmock.NewRows([]string{"id", "name", "email", "created_at", "updated_at"}).
 		AddRow(1, "John Doe", "john@example.com", time.Now(), time.Now()).
@@ -127,7 +195,7 @@ func TestFindAll(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "test_models"`)).
 		WillReturnRows(rows)
 
-	results, err := repo.FindAll()
+	results, err := repo.FindAll(ctx)
 
 	assert.NoError(t, err)
 	assert.Len(t, results, 2)
@@ -140,25 +208,43 @@ func TestFindAllEmpty(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	rows := sqlmock.NewRows([]string{"id", "name", "email", "created_at", "updated_at"})
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "test_models"`)).
 		WillReturnRows(rows)
 
-	results, err := repo.FindAll()
+	results, err := repo.FindAll(ctx)
 
 	assert.NoError(t, err)
 	assert.Len(t, results, 0)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestFindAllWithCanceledContext(t *testing.T) {
+	db, _, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	results, err := repo.FindAll(ctx)
+
+	assert.Error(t, err)
+	assert.Nil(t, results)
+	assert.Contains(t, err.Error(), "context canceled")
+}
+
 func TestUpdate(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	testModel := &TestModel{
 		ID:    1,
@@ -172,17 +258,39 @@ func TestUpdate(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := repo.Update(testModel)
+	err := repo.Update(ctx, testModel)
 
 	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateWithCanceledContext(t *testing.T) {
+	db, _, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testModel := &TestModel{
+		ID:    1,
+		Name:  "John Updated",
+		Email: "john.updated@example.com",
+	}
+
+	err := repo.Update(ctx, testModel)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
 }
 
 func TestDelete(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "test_models" WHERE "test_models"."id" = $1`)).
@@ -190,17 +298,33 @@ func TestDelete(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	err := repo.Delete(uint(1))
+	err := repo.Delete(ctx, uint(1))
 
 	assert.NoError(t, err)
 	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDeleteWithCanceledContext(t *testing.T) {
+	db, _, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := repo.Delete(ctx, uint(1))
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
 }
 
 func TestCreateTx(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	testModel := &TestModel{
 		Name:  "Transaction Test",
@@ -214,10 +338,36 @@ func TestCreateTx(t *testing.T) {
 	mock.ExpectCommit()
 
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return repo.CreateTx(tx, testModel)
+		return repo.CreateTx(ctx, tx, testModel)
 	})
 
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCreateTxWithCanceledContext(t *testing.T) {
+	db, mock, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	testModel := &TestModel{
+		Name:  "Transaction Test",
+		Email: "tx@example.com",
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return repo.CreateTx(ctx, tx, testModel)
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -225,7 +375,8 @@ func TestUpdateTx(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	testModel := &TestModel{
 		ID:    1,
@@ -240,7 +391,7 @@ func TestUpdateTx(t *testing.T) {
 	mock.ExpectCommit()
 
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return repo.UpdateTx(tx, testModel)
+		return repo.UpdateTx(ctx, tx, testModel)
 	})
 
 	assert.NoError(t, err)
@@ -251,7 +402,8 @@ func TestDeleteTx(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "test_models" WHERE "test_models"."id" = $1`)).
@@ -260,7 +412,7 @@ func TestDeleteTx(t *testing.T) {
 	mock.ExpectCommit()
 
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return repo.DeleteTx(tx, uint(1))
+		return repo.DeleteTx(ctx, tx, uint(1))
 	})
 
 	assert.NoError(t, err)
@@ -271,7 +423,8 @@ func TestTransactionRollback(t *testing.T) {
 	db, mock, sqlDB := setupMockDB(t)
 	defer sqlDB.Close()
 
-	repo := repository.NewRepository[TestModel](db)
+	repo := NewRepository[TestModel](db)
+	ctx := context.Background()
 
 	testModel := &TestModel{
 		Name:  "Rollback Test",
@@ -285,9 +438,67 @@ func TestTransactionRollback(t *testing.T) {
 	mock.ExpectRollback()
 
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return repo.CreateTx(tx, testModel)
+		return repo.CreateTx(ctx, tx, testModel)
 	})
 
 	assert.Error(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestContextWithTimeout(t *testing.T) {
+	db, mock, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	// Context con timeout de 100ms
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	rows := sqlmock.NewRows([]string{"id", "name", "email", "created_at", "updated_at"}).
+		AddRow(1, "John", "john@example.com", time.Now(), time.Now())
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "test_models" WHERE "test_models"."id" = $1 ORDER BY "test_models"."id" LIMIT $2`)).
+		WithArgs(1, 1).
+		WillDelayFor(200 * time.Millisecond). // Simula query lenta
+		WillReturnRows(rows)
+
+	result, err := repo.FindByID(ctx, uint(1))
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	// The error can be either "context deadline exceeded" or "canceling query due to user request"
+	// depending on timing and database implementation
+	errStr := err.Error()
+	assert.True(t,
+		strings.Contains(errStr, "context deadline exceeded") || strings.Contains(errStr, "cancel"),
+		"expected error to contain 'context deadline exceeded' or 'cancel', got: %s", errStr)
+}
+
+func TestContextWithValue(t *testing.T) {
+	db, mock, sqlDB := setupMockDB(t)
+	defer sqlDB.Close()
+
+	repo := NewRepository[TestModel](db)
+
+	// Context con valor
+	ctx := context.WithValue(context.Background(), "request_id", "test-123")
+
+	rows := sqlmock.NewRows([]string{"id", "name", "email", "created_at", "updated_at"}).
+		AddRow(1, "John", "john@example.com", time.Now(), time.Now())
+
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "test_models" WHERE "test_models"."id" = $1 ORDER BY "test_models"."id" LIMIT $2`)).
+		WithArgs(1, 1).
+		WillReturnRows(rows)
+
+	result, err := repo.FindByID(ctx, uint(1))
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verificar que el context mantiene el valor
+	requestID := ctx.Value("request_id").(string)
+	assert.Equal(t, "test-123", requestID)
+
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
