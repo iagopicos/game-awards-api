@@ -15,6 +15,6 @@ type GameRepository interface {
 
 	//Domain-spececific queries
 
-	GetByDeveloper(ctx context.Context, email string) ([]*models.Game, error)
+	GetByDeveloper(ctx context.Context, developer string, limit, offset int) ([]models.Game, int64, error)
 	GetByName(ctx context.Context, name string) (*models.Game, error)
 }
