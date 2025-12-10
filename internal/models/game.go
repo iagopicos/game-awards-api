@@ -11,6 +11,7 @@ type Game struct {
 	Title       string       `gorm:"type:varchar(255);not null" json:"title"`
 	ReleaseDate *time.Time   `gorm:"type:date" json:"release_date"`
 	ImageURL    string       `gorm:"type:varchar(500)" json:"image_url"`
+	Developer   string       `gorm:"type:varchar(250)" json:"developer"`
 	Nominations []Nomination `gorm:"foreignKey:GameID" json:"nominations,omitempty"`
 	Awards      []Award      `gorm:"foreignKey:GameWinnerID" json:"awards,omitempty"`
 	Predictions []Prediction `gorm:"foreignKey:GameIDPredicted" json:"predictions,omitempty"`
